@@ -1,0 +1,10 @@
+replicaCount: 3
+
+image:
+  repository: your-docker-hub-id/your-image-name
+  tag: latest
+  pullPolicy: IfNotPresent
+
+service:
+  type: NodePort
+  port: 8000

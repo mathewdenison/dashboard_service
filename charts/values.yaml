@@ -10,6 +10,7 @@ service:
   port: 8000
 
 redis:
+  createSecret: false
   host: master.hopkinstimesheetcache.krnfqa.use2.cache.amazonaws.com
   port: "6379"
   password: RedisAuthToken1234

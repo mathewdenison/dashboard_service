@@ -7,14 +7,12 @@ import os
 import requests
 import redis
 
-# --- Config ---
 REDIS_HOST = os.getenv('REDIS_HOST', 'localhost')
 REDIS_PORT = int(os.getenv('REDIS_PORT', '6379'))
 REDIS_PASSWORD = os.getenv('REDIS_PASSWORD', None)
 POD_ID = os.getenv("POD_ID", os.urandom(4).hex())
 REDIS_URL = f"redis://:{REDIS_PASSWORD}@{REDIS_HOST}:{REDIS_PORT}/0" if REDIS_PASSWORD else f"redis://{REDIS_HOST}:{REDIS_PORT}/0"
 
-# --- Init ---
 app = Flask(__name__)
 socketio = SocketIO(app, cors_allowed_origins="*", message_queue=REDIS_URL)  # Redis pubsub backend for multi-pod
 r = redis.Redis.from_url(REDIS_URL)
@@ -23,7 +21,7 @@ sqs = boto3.client('sqs')
 dashboard_queue_url = sqs.get_queue_url(QueueName='dashboard_queue')['QueueUrl']
 USER_MANAGEMENT_SERVICE_URL = os.getenv('USER_MANAGEMENT_SERVICE_URL')
 
-# --- Socket Events ---
+
 @socketio.on('join')
 def on_join(data):
     employee_id = data['employee_id']

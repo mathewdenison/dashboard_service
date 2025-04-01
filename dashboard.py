@@ -71,9 +71,14 @@ def listen_sqs_messages():
 
         if 'Messages' in response:
             for msg in response['Messages']:
-                data = json.loads(msg['Body'])
-                employee_id = data.get('employee_id')
-                payload = data.get('payload', data)
+                full_payload = json.loads(msg['Body'])
+                employee_id = full_payload.get('employee_id')
+                message_type = full_payload.get('type', 'generic')
+                payload = {
+                    "type": message_type,
+                    "employee_id": employee_id,
+                    "data": full_payload.get('payload', full_payload)
+                }
 
                 redis_val = r.get(f"user:{employee_id}")
                 if redis_val:
@@ -85,8 +90,10 @@ def listen_sqs_messages():
                         print(f"[{POD_ID}] Publishing to Redis for {employee_id} on pod {target_pod}")
                         r.publish("dashboard-updates", json.dumps({
                             "employee_id": employee_id,
-                            "payload": payload
+                            "type": message_type,
+                            "payload": payload["data"]
                         }))
+
                 sqs.delete_message(
                     QueueUrl=dashboard_queue_url,
                     ReceiptHandle=msg["ReceiptHandle"]
@@ -102,13 +109,20 @@ def listen_redis_pubsub():
         try:
             data = json.loads(message['data'])
             employee_id = data['employee_id']
-            payload = data['payload']
+            payload = {
+                "type": data.get("type", "generic"),
+                "employee_id": employee_id,
+                "data": data.get("payload", {})
+            }
+
             sid = r.get(f"user:{employee_id}")
             if sid and sid.decode().startswith(POD_ID):
                 print(f"[{POD_ID}] Redis pubsub: emitting to {employee_id}")
                 socketio.emit("dashboard_update", payload, room=employee_id)
+
         except Exception as e:
             print(f"Redis pubsub error: {e}")
+
 
 
 if __name__ == '__main__':

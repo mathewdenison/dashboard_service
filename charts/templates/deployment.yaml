@@ -33,6 +33,6 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: redis-secret
-                  key: REDIS_PASSWORD
+                  key: RedisAuthToken1234
             - name: USER_MANAGEMENT_SERVICE_URL
               value: {{ .Values.userManagementService.url | quote }}

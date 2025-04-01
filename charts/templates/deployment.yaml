@@ -20,3 +20,19 @@ spec:
             - name: http
               containerPort: 8000
               protocol: TCP
+          env:
+            - name: REDIS_HOST
+              value: {{ .Values.redis.host | quote }}
+            - name: REDIS_PORT
+              value: {{ .Values.redis.port | quote }}
+            - name: POD_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis-secret
+                  key: REDIS_PASSWORD
+            - name: USER_MANAGEMENT_SERVICE_URL
+              value: {{ .Values.userManagementService.url | quote }}

@@ -1,10 +1,17 @@
 replicaCount: 3
 
 image:
-  repository: your-docker-hub-id/your-image-name
+  repository: 883640716669.dkr.ecr.us-east-2.amazonaws.com/dashboard_reg
   tag: latest
   pullPolicy: IfNotPresent
 
 service:
   type: NodePort
   port: 8000
+
+redis:
+  host: master.hopkinstimesheetcache.krnfqa.use2.cache.amazonaws.com
+  port: "6379"
+
+userManagementService:
+  url: http://user-management-service.default.svc.cluster.local

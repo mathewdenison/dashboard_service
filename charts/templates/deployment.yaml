@@ -1,16 +1,16 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "dashboard_service.fullname" . }}
+  name: {{ include "dashboard-service.fullname" . }}
 spec:
   replicas: {{ .Values.replicaCount }}
   selector:
     matchLabels:
-      app: {{ include "dashboard_service.name" . }}
+      app: {{ include "dashboard-service.name" . }}
   template:
     metadata:
       labels:
-        app: {{ include "dashboard_service.name" . }}
+        app: {{ include "dashboard-service.name" . }}
     spec:
       serviceAccountName: eks-apps-service-account
       containers:

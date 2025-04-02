@@ -1,4 +1,4 @@
 apiVersion: v2
-name: dashboard_service
+name: dashboard-service
 description: A Helm chart for Kubernetes
 version: 1.0.0

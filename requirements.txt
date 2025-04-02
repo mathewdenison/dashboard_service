@@ -1,3 +1,4 @@
-boto3~=1.36.12
+google-cloud-pubsub>=2.0.0
+google-cloud-logging>=3.0.0
 Flask~=3.0.3
 requests~=2.32.3

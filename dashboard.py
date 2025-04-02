@@ -1,12 +1,14 @@
+import json
+import logging
 from flask import Flask, request
 from flask_socketio import SocketIO, join_room, leave_room, disconnect
-import boto3
-import json
 import threading
 import os
 import requests
 import redis
+from google.cloud import pubsub_v1
 
+# Redis and Flask setup
 REDIS_HOST = os.getenv('REDIS_HOST', 'localhost')
 REDIS_PORT = int(os.getenv('REDIS_PORT', '6379'))
 REDIS_PASSWORD = os.getenv('REDIS_PASSWORD', None)
@@ -17,8 +19,14 @@ app = Flask(__name__)
 socketio = SocketIO(app, cors_allowed_origins="*", message_queue=REDIS_URL)  # Redis pubsub backend for multi-pod
 r = redis.Redis.from_url(REDIS_URL)
 
-sqs = boto3.client('sqs')
-dashboard_queue_url = sqs.get_queue_url(QueueName='dashboard_queue')['QueueUrl']
+# Google Cloud Pub/Sub client initialization
+subscriber = pubsub_v1.SubscriberClient()
+publisher = pubsub_v1.PublisherClient()
+
+# GCP Pub/Sub subscription and topic names (replace with actual values)
+dashboard_topic = 'projects/hopkinstimesheetproj/topics/dashboard-topic'
+dashboard_subscription = 'projects/hopkinstimesheetproj/subscriptions/dashboard-subscription'
+
 USER_MANAGEMENT_SERVICE_URL = os.getenv('USER_MANAGEMENT_SERVICE_URL')
 
 
@@ -55,21 +63,17 @@ def on_leave(data):
     leave_room(employee_id)
     r.delete(f"user:{employee_id}")
 
-# --- SQS Consumer Thread ---
-def listen_sqs_messages():
-    while True:
-        response = sqs.receive_message(
-            QueueUrl=dashboard_queue_url,
-            AttributeNames=['All'],
-            MaxNumberOfMessages=1,
-            MessageAttributeNames=['All'],
-            VisibilityTimeout=30,
-            WaitTimeSeconds=20
-        )
 
-        if 'Messages' in response:
-            for msg in response['Messages']:
-                full_payload = json.loads(msg['Body'])
+# --- Pub/Sub Consumer Thread ---
+def listen_pubsub_messages():
+    while True:
+        # Pull messages from the Pub/Sub subscription
+        subscription_path = subscriber.subscription_path('hopkinstimesheetproj', dashboard_subscription)
+        response = subscriber.pull(subscription_path, max_messages=1, return_immediately=True)
+
+        if response.received_messages:
+            for msg in response.received_messages:
+                full_payload = json.loads(msg.message.data.decode("utf-8"))
                 employee_id = full_payload.get('employee_id')
                 message_type = full_payload.get('type', 'generic')
                 payload = {
@@ -78,6 +82,7 @@ def listen_sqs_messages():
                     "data": full_payload.get('payload', full_payload)
                 }
 
+                # Get the user’s session id from Redis
                 redis_val = r.get(f"user:{employee_id}")
                 if redis_val:
                     target_pod, sid = redis_val.decode().split(":")
@@ -92,10 +97,8 @@ def listen_sqs_messages():
                             "payload": payload["data"]
                         }))
 
-                sqs.delete_message(
-                    QueueUrl=dashboard_queue_url,
-                    ReceiptHandle=msg["ReceiptHandle"]
-                )
+                # Acknowledge the message after processing
+                subscriber.acknowledge(subscription_path, [msg.ack_id])
 
 
 def listen_redis_pubsub():
@@ -122,8 +125,7 @@ def listen_redis_pubsub():
             print(f"Redis pubsub error: {e}")
 
 
-
 if __name__ == '__main__':
-    threading.Thread(target=listen_sqs_messages, daemon=True).start()
+    threading.Thread(target=listen_pubsub_messages, daemon=True).start()
     threading.Thread(target=listen_redis_pubsub, daemon=True).start()
     socketio.run(app, host="0.0.0.0", port=5000)

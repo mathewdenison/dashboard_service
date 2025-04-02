@@ -1,5 +1,4 @@
 import json
-import logging
 from flask import Flask, request
 from flask_socketio import SocketIO, join_room, leave_room, disconnect
 import threading
@@ -128,4 +127,4 @@ def listen_redis_pubsub():
 if __name__ == '__main__':
     threading.Thread(target=listen_pubsub_messages, daemon=True).start()
     threading.Thread(target=listen_redis_pubsub, daemon=True).start()
-    socketio.run(app, host="0.0.0.0", port=5000)
+    socketio.run(app, host="0.0.0.0", port=5000, use_reloader=False)

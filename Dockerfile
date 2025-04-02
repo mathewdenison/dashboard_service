@@ -1,17 +1,23 @@
-# Python Image
-FROM python:3.8
+# Use a base image with Python
+FROM python:3.8-slim
 
-# Set the working directory in the container to /app
+# Install necessary packages
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set the working directory inside the container
 WORKDIR /app
 
-# Copy requirements.txt into the app directory
-COPY requirements.txt .
+# Copy requirements.txt and install dependencies
+COPY requirements.txt /app/
+RUN pip install -r requirements.txt
 
-# Install any needed packages specified in requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
-
-# This is to copy your current directory (with the source code) into the Docker image
+# Copy the application code
 COPY . /app
 
-# The command to run your application when the docker container starts
-CMD ["python", "./dashboard.py"]
+# Expose the port the app runs on
+EXPOSE 5000
+
+# Set the command to run the app with gunicorn
+CMD ["gunicorn", "-w", "4", "-b", "0.0.0.0:5000", "dashboard:app"]

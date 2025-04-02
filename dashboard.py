@@ -9,14 +9,14 @@ import redis
 from google.cloud import pubsub_v1
 
 # Redis and Flask setup
-REDIS_HOST = os.getenv('REDIS_HOST', 'localhost')
-REDIS_PORT = int(os.getenv('REDIS_PORT', '6379'))
-REDIS_PASSWORD = os.getenv('REDIS_PASSWORD', None)
+REDIS_HOST = os.getenv('REDIS_HOST', 'your-memorystore-instance-ip') 
+REDIS_PORT = int(os.getenv('REDIS_PORT', '6379')) 
+REDIS_PASSWORD = os.getenv('REDIS_PASSWORD', None)  
 POD_ID = os.getenv("POD_ID", os.urandom(4).hex())
 REDIS_URL = f"redis://:{REDIS_PASSWORD}@{REDIS_HOST}:{REDIS_PORT}/0" if REDIS_PASSWORD else f"redis://{REDIS_HOST}:{REDIS_PORT}/0"
 
 app = Flask(__name__)
-socketio = SocketIO(app, cors_allowed_origins="*", message_queue=REDIS_URL)  # Redis pubsub backend for multi-pod
+socketio = SocketIO(app, cors_allowed_origins="*", message_queue=REDIS_URL)
 r = redis.Redis.from_url(REDIS_URL)
 
 # Google Cloud Pub/Sub client initialization

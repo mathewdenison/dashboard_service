@@ -11,9 +11,9 @@ service:
 
 redis:
   createSecret: false
-  host: master.hopkinstimesheetcache.krnfqa.use2.cache.amazonaws.com
+  host: 10.155.183.243
   port: "6379"
-  password: RedisAuthToken1234
+  password: 70a21bc8-d827-4cfd-8ec1-d2b5cce8af81
 
 userManagementService:
   url: http://user-management-service.default.svc.cluster.local

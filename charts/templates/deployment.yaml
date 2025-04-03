@@ -1,20 +1,20 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "dashboard-service.fullname" . }}
+  name: dashboard-service
 spec:
   replicas: {{ .Values.replicaCount }}
   selector:
     matchLabels:
-      app: {{ include "dashboard-service.name" . }}
+      app: dashboard-service
   template:
     metadata:
       labels:
-        app: {{ include "dashboard-service.name" . }}
+        app: dashboard-service
     spec:
       serviceAccountName: eks-apps-service-account
       containers:
-        - name: {{ .Chart.Name }}
+        - name: dashboard-service
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:

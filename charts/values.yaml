@@ -1,7 +1,7 @@
 replicaCount: 3
 
 image:
-  repository: 883640716669.dkr.ecr.us-east-2.amazonaws.com/dashboard_reg
+  repository: gcr.io/hopkinstimesheetproj/dashboard-service
   tag: latest
   pullPolicy: IfNotPresent
 

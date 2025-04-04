@@ -17,7 +17,7 @@ RUN pip install -r requirements.txt
 COPY . /app
 
 # Expose the port the app runs on
-EXPOSE 5000
+EXPOSE 8000
 
 # Set the command to run the app with gunicorn
-CMD ["gunicorn", "-w", "4", "-b", "0.0.0.0:5000", "dashboard:app"]
+CMD ["gunicorn", "-w", "4", "-b", "0.0.0.0:8000", "dashboard:app"]

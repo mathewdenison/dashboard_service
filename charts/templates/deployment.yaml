@@ -12,6 +12,8 @@ spec:
       labels:
         app: dashboard-service
     spec:
+      nodeSelector:
+        pubsub: "true"
       serviceAccountName: eks-apps-service-account
       containers:
         - name: dashboard-service

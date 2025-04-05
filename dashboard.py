@@ -15,8 +15,8 @@ subscriber = pubsub_v1.SubscriberClient()
 publisher = pubsub_v1.PublisherClient()
 
 # GCP Pub/Sub subscription and topic names (replace with actual values)
-dashboard_topic = 'projects/hopkinstimesheetproj/topics/dashboard-topic'
-dashboard_subscription = 'projects/hopkinstimesheetproj/subscriptions/dashboard-subscription'
+dashboard_topic = 'projects/hopkinstimesheetproj/topics/dashboard-queue'
+dashboard_subscription = 'projects/hopkinstimesheetproj/subscriptions/dashboard-sub'
 
 USER_MANAGEMENT_SERVICE_URL = os.getenv('USER_MANAGEMENT_SERVICE_URL')
 

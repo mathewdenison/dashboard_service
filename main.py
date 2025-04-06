@@ -14,7 +14,7 @@ app = FastAPI()
 # A connection manager to track active WebSocket connections by employee_id.
 class ConnectionManager:
     def __init__(self):
-        # Dictionary mapping employee_id to list of WebSocket connections
+        # Dictionary mapping employee_id to list of WebSocket connections.
         self.active_connections = {}
 
     async def connect(self, websocket: WebSocket, employee_id: str):
@@ -39,6 +39,15 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
+# Keep-alive task: send periodic pings to keep the connection alive.
+async def send_keepalive(websocket: WebSocket, interval: int = 30):
+    try:
+        while True:
+            await asyncio.sleep(interval)
+            await websocket.send_text('{"type": "ping"}')
+    except Exception as e:
+        logger.exception("Keepalive error: %s", e)
+
 # --- WebSocket Endpoint ---
 @app.websocket("/ws/dashboard")
 async def websocket_endpoint(
@@ -48,12 +57,15 @@ async def websocket_endpoint(
 ):
     # TODO: Insert token verification logic here if needed.
     await manager.connect(websocket, employee_id)
+    # Start a keep-alive task for this connection.
+    keepalive_task = asyncio.create_task(send_keepalive(websocket))
     try:
         while True:
             data = await websocket.receive_text()
             logger.info(f"Received from employee {employee_id}: {data}")
             # Optionally process incoming messages from the client.
     except WebSocketDisconnect:
+        keepalive_task.cancel()
         manager.disconnect(websocket, employee_id)
 
 # --- Google Pub/Sub Setup ---

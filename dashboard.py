@@ -34,6 +34,7 @@ USER_MANAGEMENT_SERVICE_URL = os.getenv("USER_MANAGEMENT_SERVICE_URL")
 # --- WebSocket Handlers ---
 @socketio.on("join")
 def on_join(data):
+    logger.info(f"Client connected: {request.sid}")
     employee_id = data["employee_id"]
     auth_token = data["auth_token"]
 

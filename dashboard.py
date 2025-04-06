@@ -4,7 +4,19 @@ from flask_socketio import SocketIO, join_room, leave_room, disconnect
 import threading
 import os
 import requests
+import time
 from google.cloud import pubsub_v1
+
+from google.cloud import logging as cloud_logging
+import logging
+
+# Set up Google Cloud Logging client
+cloud_log_client = cloud_logging.Client()
+cloud_log_client.setup_logging()
+
+# Optional: Standard Python logger for local/dev use too
+logger = logging.getLogger("dashboard_service")
+logger.setLevel(logging.INFO)
 
 app = Flask(__name__)
 # Initialize SocketIO without Redis
@@ -26,7 +38,6 @@ def on_join(data):
     employee_id = data['employee_id']
     auth_token = data['auth_token']
 
-    # Verify token with user management service
     response = requests.get(f'{USER_MANAGEMENT_SERVICE_URL}/verify-token', headers={
         'Authorization': f'Bearer {auth_token}'
     })
@@ -34,46 +45,55 @@ def on_join(data):
     if response.status_code == 200:
         sid = request.sid
         join_room(employee_id)
-        print(f"User {employee_id} joined room with sid={sid}")
+        logger.info(f"User {employee_id} joined room with sid={sid}")
     else:
+        logger.warning(f"Unauthorized join attempt for employee_id={employee_id}")
         disconnect()
 
 @socketio.on('disconnect')
 def on_disconnect():
     sid = request.sid
-    print(f"User disconnected with sid={sid}")
-    # No need for Redis cleanup as we're not using Redis anymore.
+    logger.info(f"User disconnected with sid={sid}")
 
 @socketio.on('leave')
 def on_leave(data):
     employee_id = data['employee_id']
     leave_room(employee_id)
-    print(f"User {employee_id} left room")
+    logger.info(f"User {employee_id} left room")
 
 
 # --- Pub/Sub Consumer Thread ---
 def listen_pubsub_messages():
+    logger.info("Dashboard Pub/Sub listener started.")
+    subscription_path = subscriber.subscription_path('hopkinstimesheetproj', dashboard_subscription)
+
     while True:
-        # Pull messages from the Pub/Sub subscription
-        subscription_path = subscriber.subscription_path('hopkinstimesheetproj', dashboard_subscription)
         response = subscriber.pull(subscription_path, max_messages=1, return_immediately=True)
 
         if response.received_messages:
+            logger.info(f"Received {len(response.received_messages)} message(s) from Pub/Sub.")
             for msg in response.received_messages:
-                full_payload = json.loads(msg.message.data.decode("utf-8"))
-                employee_id = full_payload.get('employee_id')
-                message_type = full_payload.get('type', 'generic')
-                payload = {
-                    "type": message_type,
-                    "employee_id": employee_id,
-                    "data": full_payload.get('payload', full_payload)
-                }
+                try:
+                    full_payload = json.loads(msg.message.data.decode("utf-8"))
+                    logger.info(f"Pub/Sub message payload: {full_payload}")
 
-                # Emit the message to the appropriate room
-                socketio.emit("dashboard_update", payload, room=employee_id)
+                    employee_id = full_payload.get('employee_id')
+                    message_type = full_payload.get('type', 'generic')
+                    payload = {
+                        "type": message_type,
+                        "employee_id": employee_id,
+                        "data": full_payload.get('payload', full_payload)
+                    }
 
-                # Acknowledge the message after processing
-                subscriber.acknowledge(subscription_path, [msg.ack_id])
+                    socketio.emit("dashboard_update", payload, room=employee_id)
+                    subscriber.acknowledge(subscription_path, [msg.ack_id])
+                    logger.info(f"Acknowledged message for employee_id={employee_id}")
+
+                except Exception as e:
+                    logger.exception("Error processing Pub/Sub message")
+        else:
+            logger.debug("No messages in Pub/Sub queue.")
+            time.sleep(2)
 
 
 if __name__ == '__main__':

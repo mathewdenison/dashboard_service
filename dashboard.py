@@ -2,10 +2,9 @@ import eventlet
 eventlet.monkey_patch()
 
 import json
-import time
 import os
-import requests
 import logging
+import requests
 
 from flask import Flask, request
 from flask_socketio import SocketIO, join_room, leave_room, disconnect
@@ -76,7 +75,7 @@ def listen_pubsub_messages():
                 }
             )
             if not response.received_messages:
-                time.sleep(2)
+                socketio.sleep(2)  # Cooperative sleep
                 continue
 
             for msg in response.received_messages:
@@ -103,3 +102,6 @@ def listen_pubsub_messages():
 
 # --- Start the Pub/Sub Listener as a Background Task ---
 socketio.start_background_task(listen_pubsub_messages)
+
+# --- Note ---
+# Do NOT call socketio.run() here; Gunicorn will run the app via your wsgi.py.

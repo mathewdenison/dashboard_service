@@ -3,6 +3,7 @@ import json
 import logging
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
 from google.cloud import pubsub_v1
+import aioredis  # For async Redis access
 
 # --- Logging Setup ---
 logging.basicConfig(level=logging.INFO)
@@ -55,9 +56,8 @@ async def websocket_endpoint(
         employee_id: str = Query(...),
         auth_token: str = Query(...)
 ):
-    # TODO: Insert token verification logic here if needed.
+    # TODO: Insert token verification logic if needed.
     await manager.connect(websocket, employee_id)
-    # Start a keep-alive task for this connection.
     keepalive_task = asyncio.create_task(send_keepalive(websocket))
     try:
         while True:
@@ -74,22 +74,48 @@ subscription_name = "dashboard-sub"
 subscription_path = f"projects/{project_id}/subscriptions/{subscription_name}"
 subscriber = pubsub_v1.SubscriberClient()
 
-# We'll store a reference to the event loop so that we can schedule coroutines from Pub/Sub callbacks.
-event_loop = asyncio.get_event_loop()
+# --- Redis Setup ---
+# Since you reinstalled Redis without authentication, we connect without a password.
+REDIS_URL = "redis://redis-master.default.svc.cluster.local:6379"
+redis = None  # Will be initialized on startup
 
+async def init_redis():
+    global redis
+    redis = await aioredis.from_url(REDIS_URL, encoding="utf-8", decode_responses=True)
+    logger.info("Redis connection established")
+
+async def redis_listener():
+    """Subscribe to the Redis channel and broadcast messages to local WebSocket connections."""
+    pubsub_redis = redis.pubsub()
+    await pubsub_redis.subscribe("dashboard_channel")
+    logger.info("Subscribed to Redis channel: dashboard_channel")
+    while True:
+        msg = await pubsub_redis.get_message(ignore_subscribe_messages=True, timeout=1.0)
+        if msg:
+            try:
+                data = msg["data"]
+                parsed = json.loads(data)
+                employee_id = parsed.get("employee_id")
+                logger.info(f"Redis received message for employee {employee_id}: {parsed}")
+                await manager.broadcast(data, employee_id)
+            except Exception as e:
+                logger.exception("Error processing Redis message: %s", e)
+        await asyncio.sleep(0.1)
+
+# --- Pub/Sub Callback (Publishing to Redis) ---
 def pubsub_callback(message: pubsub_v1.subscriber.message.Message):
     try:
         payload = json.loads(message.data.decode("utf-8"))
         employee_id = payload.get("employee_id")
         logger.info(f"Received Pub/Sub message for employee {employee_id}: {payload}")
-        # Schedule the broadcast on the event loop.
+        # Publish the payload to the Redis channel
         future = asyncio.run_coroutine_threadsafe(
-            manager.broadcast(json.dumps(payload), employee_id), event_loop
+            redis.publish("dashboard_channel", json.dumps(payload)), event_loop
         )
-        future.result()  # Optionally wait for the broadcast to complete.
+        future.result()  # Optionally wait for the publish to complete.
         message.ack()
     except Exception as e:
-        logger.exception("Error processing Pub/Sub message")
+        logger.exception("Error processing Pub/Sub message: %s", e)
         message.nack()
 
 def start_pubsub_listener():
@@ -100,9 +126,16 @@ def start_pubsub_listener():
     except Exception as e:
         logger.exception("Error in Pub/Sub listener: %s", e)
 
+# --- Startup Event ---
+event_loop = asyncio.get_event_loop()
+
 @app.on_event("startup")
 async def startup_event():
     global event_loop
     event_loop = asyncio.get_event_loop()
-    # Run the blocking Pub/Sub listener in a separate thread so it doesn't block the event loop.
+    # Initialize Redis connection.
+    await init_redis()
+    # Start the Redis listener as a background task.
+    event_loop.create_task(redis_listener())
+    # Run the blocking Pub/Sub listener in an executor.
     event_loop.run_in_executor(None, start_pubsub_listener)

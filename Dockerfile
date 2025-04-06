@@ -22,4 +22,4 @@ EXPOSE 8000
 RUN pip install eventlet
 
 # Set the command to run the app with gunicorn
-CMD ["gunicorn", "-k", "eventlet", "-w", "1", "-b", "0.0.0.0:8000", "wsgi:app"]
+CMD ["gunicorn", "-k", "eventlet", "-w", "1", "--timeout", "3600", "-b", "0.0.0.0:8000", "wsgi:app"]

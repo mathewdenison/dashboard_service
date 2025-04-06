@@ -5,6 +5,7 @@ import json
 import os
 import logging
 import requests
+from google.api_core.exceptions import DeadlineExceeded
 
 from flask import Flask, request
 from flask_socketio import SocketIO, join_room, leave_room, disconnect
@@ -68,37 +69,46 @@ def listen_pubsub_messages():
 
     while True:
         try:
+            # Set a shorter timeout (e.g., 5 seconds) for the pull
             response = subscriber.pull(
                 request={
                     "subscription": subscription_path,
                     "max_messages": 1,
-                }
+                },
+                timeout=5  # Adjust the timeout as needed
             )
-            if not response.received_messages:
-                socketio.sleep(2)  # Cooperative sleep
-                continue
-
-            for msg in response.received_messages:
-                try:
-                    full_payload = json.loads(msg.message.data.decode("utf-8"))
-                    logger.info(f"Pub/Sub message payload: {full_payload}")
-
-                    employee_id = full_payload.get("employee_id")
-                    message_type = full_payload.get("type", "generic")
-                    payload = {
-                        "type": message_type,
-                        "employee_id": employee_id,
-                        "data": full_payload.get("payload", full_payload),
-                    }
-
-                    socketio.emit("dashboard_update", payload, room=employee_id)
-                    subscriber.acknowledge(subscription_path, [msg.ack_id])
-                    logger.info(f"Acknowledged message for employee_id={employee_id}")
-
-                except Exception as e:
-                    logger.exception("Error processing Pub/Sub message")
+        except DeadlineExceeded:
+            # If no messages are available within the timeout, yield and try again
+            socketio.sleep(2)
+            continue
         except Exception as e:
-            logger.exception("Error in Pub/Sub listener loop")
+            logger.exception("Unexpected error in Pub/Sub listener loop")
+            socketio.sleep(2)
+            continue
+
+        if not response.received_messages:
+            socketio.sleep(2)
+            continue
+
+        for msg in response.received_messages:
+            try:
+                full_payload = json.loads(msg.message.data.decode("utf-8"))
+                logger.info(f"Pub/Sub message payload: {full_payload}")
+
+                employee_id = full_payload.get("employee_id")
+                message_type = full_payload.get("type", "generic")
+                payload = {
+                    "type": message_type,
+                    "employee_id": employee_id,
+                    "data": full_payload.get("payload", full_payload),
+                }
+
+                socketio.emit("dashboard_update", payload, room=employee_id)
+                subscriber.acknowledge(subscription_path, [msg.ack_id])
+                logger.info(f"Acknowledged message for employee_id={employee_id}")
+
+            except Exception as e:
+                logger.exception("Error processing Pub/Sub message")
 
 # --- Start the Pub/Sub Listener as a Background Task ---
 socketio.start_background_task(listen_pubsub_messages)

@@ -20,7 +20,6 @@ class ConnectionManager:
 
     async def connect(self, websocket: WebSocket, employee_id: str):
         await websocket.accept()
-        # Ensure employee_id is always a string.
         employee_id = str(employee_id)
         if employee_id not in self.active_connections:
             self.active_connections[employee_id] = []
@@ -61,7 +60,6 @@ async def websocket_endpoint(
         auth_token: str = Query(...)
 ):
     # TODO: Insert token verification logic if needed.
-    # Ensure employee_id is a string:
     employee_id = str(employee_id)
     await manager.connect(websocket, employee_id)
     keepalive_task = asyncio.create_task(send_keepalive(websocket))
@@ -101,9 +99,10 @@ async def redis_listener():
             try:
                 data = msg["data"]
                 parsed = json.loads(data)
-                # Force employee_id to string.
                 employee_id = str(parsed.get("employee_id"))
-                logger.info(f"Redis received message for employee {employee_id}: {parsed}")
+                msg_type = parsed.get("type", "data")
+                logger.info(f"Redis received message for employee {employee_id} with type '{msg_type}': {parsed}")
+                # Broadcast the message to the employee's connections.
                 await manager.broadcast(data, employee_id)
             except Exception as e:
                 logger.exception("Error processing Redis message: %s", e)
@@ -113,7 +112,6 @@ async def redis_listener():
 def pubsub_callback(message: pubsub_v1.subscriber.message.Message):
     try:
         payload = json.loads(message.data.decode("utf-8"))
-        # Force employee_id to string.
         employee_id = str(payload.get("employee_id"))
         logger.info(f"Received Pub/Sub message for employee {employee_id}: {payload}")
         # Publish the payload to the Redis channel.

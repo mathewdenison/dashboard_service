@@ -19,7 +19,6 @@ COPY . /app
 # Expose the port the app runs on
 EXPOSE 8000
 
-RUN pip install eventlet
+# Set the command to run the FastAPI app with uvicorn
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
 
-# Set the command to run the app with gunicorn
-CMD ["gunicorn", "-k", "eventlet", "-w", "1", "--timeout", "3600", "-b", "0.0.0.0:8000", "wsgi:app"]

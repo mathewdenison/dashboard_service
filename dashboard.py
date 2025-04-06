@@ -72,10 +72,13 @@ def listen_pubsub_messages():
     while True:
         try:
             response = subscriber.pull(
-                subscription_path,
-                max_messages=1,
-                return_immediately=True
+                request={
+                    "subscription": subscription_path,
+                    "max_messages": 1,
+                }
             )
+            if not response.received_messages:
+                time.sleep(2)
 
             if response.received_messages:
                 logger.info(f"Received {len(response.received_messages)} message(s) from Pub/Sub.")

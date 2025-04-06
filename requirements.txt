@@ -1,3 +1,4 @@
 fastapi==0.95.2
+python-socketio[asyncio]==5.8.0
 uvicorn[standard]==0.22.0
 google-cloud-pubsub==2.17.0

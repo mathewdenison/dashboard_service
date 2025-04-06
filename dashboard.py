@@ -76,7 +76,7 @@ def pubsub_callback(message):
             "data": full_payload.get("payload", full_payload),
         }
 
-        # Emit the update to SocketIO clients in the room identified by employee_id
+        # Emit the update to Socket.IO clients in the room identified by employee_id
         socketio.emit("dashboard_update", payload, room=employee_id)
         # Acknowledge the message
         subscriber.acknowledge(subscription_path, [message.ack_id])
@@ -95,8 +95,12 @@ def start_pubsub_listener():
     except Exception as e:
         logger.exception("Error in asynchronous Pub/Sub listener: %s", e)
 
-# Launch the listener in a dedicated daemon thread so it won't block the main event loop.
-threading.Thread(target=start_pubsub_listener, daemon=True).start()
+# Launch the listener as an eventlet green thread.
+socketio.start_background_task(start_pubsub_listener)
+
+# --- Note ---
+# Do NOT call socketio.run() here; Gunicorn will run the app via your wsgi.py.
+
 
 # --- Note ---
 # Do NOT call socketio.run() here; Gunicorn will run the app via your wsgi.py.

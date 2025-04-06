@@ -1,44 +1,60 @@
 import asyncio
 import json
 import logging
-import os
-from fastapi import FastAPI
-import socketio
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
 from google.cloud import pubsub_v1
 
 # --- Logging Setup ---
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("dashboard_service")
 
-# --- Socket.IO Server Setup ---
-# Create an Async Socket.IO server; here we use asyncio as async_mode.
-sio = socketio.AsyncServer(async_mode="asgi", cors_allowed_origins="*")
+# --- FastAPI and WebSocket Setup ---
 app = FastAPI()
-# Mount the Socket.IO ASGI app on a specific path (default is /socket.io)
-sio_app = socketio.ASGIApp(sio, other_asgi_app=app)
 
-# --- Socket.IO Event Handlers ---
-@sio.event
-async def connect(sid, environ, auth):
-    """
-    Connection event handler.
-    Expects 'employee_id' (and optionally an auth token) to be provided in the auth dict.
-    """
-    employee_id = auth.get("employee_id")
-    logger.info(f"Client connected: {sid}, employee: {employee_id}")
-    if not employee_id:
-        # Reject connection if no employee_id provided.
-        await sio.disconnect(sid)
-    else:
-        # Save session and join a room identified by employee_id.
-        await sio.save_session(sid, {"employee_id": employee_id})
-        await sio.enter_room(sid, employee_id)
+# A connection manager to track active WebSocket connections by employee_id.
+class ConnectionManager:
+    def __init__(self):
+        # Dictionary mapping employee_id to list of WebSocket connections
+        self.active_connections = {}
 
-@sio.event
-async def disconnect(sid):
-    session = await sio.get_session(sid)
-    employee_id = session.get("employee_id") if session else None
-    logger.info(f"Client disconnected: {sid}, employee: {employee_id}")
+    async def connect(self, websocket: WebSocket, employee_id: str):
+        await websocket.accept()
+        if employee_id not in self.active_connections:
+            self.active_connections[employee_id] = []
+        self.active_connections[employee_id].append(websocket)
+        logger.info(f"Employee {employee_id} connected. Total connections: {len(self.active_connections[employee_id])}")
+
+    def disconnect(self, websocket: WebSocket, employee_id: str):
+        if employee_id in self.active_connections:
+            self.active_connections[employee_id].remove(websocket)
+            logger.info(f"Employee {employee_id} disconnected. Remaining: {len(self.active_connections[employee_id])}")
+
+    async def broadcast(self, message: str, employee_id: str):
+        if employee_id in self.active_connections:
+            for connection in self.active_connections[employee_id]:
+                try:
+                    await connection.send_text(message)
+                except Exception as e:
+                    logger.exception("Error sending message to employee %s: %s", employee_id, e)
+
+manager = ConnectionManager()
+
+# --- WebSocket Endpoint ---
+@app.websocket("/ws/dashboard")
+async def websocket_endpoint(
+        websocket: WebSocket,
+        employee_id: str = Query(...),
+        auth_token: str = Query(...)
+):
+    # TODO: Insert token verification logic here if needed.
+    await manager.connect(websocket, employee_id)
+    try:
+        while True:
+            data = await websocket.receive_text()
+            logger.info(f"Received from employee {employee_id}: {data}")
+            # Optionally process incoming messages from the client.
+    except WebSocketDisconnect:
+        manager.disconnect(websocket, employee_id)
 
 # --- Google Pub/Sub Setup ---
 project_id = "hopkinstimesheetproj"
@@ -54,12 +70,11 @@ def pubsub_callback(message: pubsub_v1.subscriber.message.Message):
         payload = json.loads(message.data.decode("utf-8"))
         employee_id = payload.get("employee_id")
         logger.info(f"Received Pub/Sub message for employee {employee_id}: {payload}")
-        # Schedule the Socket.IO emit on the event loop.
+        # Schedule the broadcast on the event loop.
         future = asyncio.run_coroutine_threadsafe(
-            sio.emit("dashboard_update", payload, room=employee_id), event_loop
+            manager.broadcast(json.dumps(payload), employee_id), event_loop
         )
-        # Optionally wait for the emit to complete:
-        future.result()
+        future.result()  # Optionally wait for the broadcast to complete.
         message.ack()
     except Exception as e:
         logger.exception("Error processing Pub/Sub message")
@@ -79,8 +94,3 @@ async def startup_event():
     event_loop = asyncio.get_event_loop()
     # Run the blocking Pub/Sub listener in a separate thread so it doesn't block the event loop.
     event_loop.run_in_executor(None, start_pubsub_listener)
-
-# --- Expose the Socket.IO app ---
-# In your deployment, make sure to run the ASGI app (sio_app) instead of the FastAPI app directly.
-# For example, with uvicorn:
-#   uvicorn main:sio_app --host 0.0.0.0 --port 8000

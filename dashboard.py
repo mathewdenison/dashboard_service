@@ -4,8 +4,8 @@ eventlet.monkey_patch()
 import json
 import os
 import logging
+import threading
 import requests
-from google.api_core.exceptions import DeadlineExceeded
 
 from flask import Flask, request
 from flask_socketio import SocketIO, join_room, leave_room, disconnect
@@ -28,7 +28,7 @@ subscriber = pubsub_v1.SubscriberClient()
 publisher = pubsub_v1.PublisherClient()
 
 project_id = "hopkinstimesheetproj"
-dashboard_subscription = f"projects/{project_id}/subscriptions/dashboard-sub"
+subscription_path = f"projects/{project_id}/subscriptions/dashboard-sub"
 dashboard_topic = f"projects/{project_id}/topics/dashboard-queue"
 
 USER_MANAGEMENT_SERVICE_URL = os.getenv("USER_MANAGEMENT_SERVICE_URL")
@@ -62,56 +62,41 @@ def on_leave(data):
     leave_room(employee_id)
     logger.info(f"User {employee_id} left room")
 
-# --- Pub/Sub Listener Function ---
-def listen_pubsub_messages():
-    logger.info("Dashboard Pub/Sub listener thread started.")
-    subscription_path = dashboard_subscription
+# --- Pub/Sub Callback Function ---
+def pubsub_callback(message):
+    try:
+        full_payload = json.loads(message.data.decode("utf-8"))
+        logger.info(f"Pub/Sub message payload: {full_payload}")
 
-    while True:
-        try:
-            # Set a shorter timeout (e.g., 5 seconds) for the pull
-            response = subscriber.pull(
-                request={
-                    "subscription": subscription_path,
-                    "max_messages": 1,
-                },
-                timeout=5  # Adjust the timeout as needed
-            )
-        except DeadlineExceeded:
-            # If no messages are available within the timeout, yield and try again
-            socketio.sleep(2)
-            continue
-        except Exception as e:
-            logger.exception("Unexpected error in Pub/Sub listener loop")
-            socketio.sleep(2)
-            continue
+        employee_id = full_payload.get("employee_id")
+        message_type = full_payload.get("type", "generic")
+        payload = {
+            "type": message_type,
+            "employee_id": employee_id,
+            "data": full_payload.get("payload", full_payload),
+        }
 
-        if not response.received_messages:
-            socketio.sleep(2)
-            continue
+        # Emit the update to SocketIO clients in the room identified by employee_id
+        socketio.emit("dashboard_update", payload, room=employee_id)
+        # Acknowledge the message
+        subscriber.acknowledge(subscription_path, [message.ack_id])
+        logger.info(f"Acknowledged message for employee_id={employee_id}")
 
-        for msg in response.received_messages:
-            try:
-                full_payload = json.loads(msg.message.data.decode("utf-8"))
-                logger.info(f"Pub/Sub message payload: {full_payload}")
+    except Exception as e:
+        logger.exception("Error processing Pub/Sub message")
+        message.nack()
 
-                employee_id = full_payload.get("employee_id")
-                message_type = full_payload.get("type", "generic")
-                payload = {
-                    "type": message_type,
-                    "employee_id": employee_id,
-                    "data": full_payload.get("payload", full_payload),
-                }
+# --- Start the Pub/Sub Listener Asynchronously ---
+def start_pubsub_listener():
+    logger.info("Starting asynchronous Pub/Sub listener")
+    future = subscriber.subscribe(subscription_path, callback=pubsub_callback)
+    try:
+        future.result()  # This blocks indefinitely unless an error occurs.
+    except Exception as e:
+        logger.exception("Error in asynchronous Pub/Sub listener: %s", e)
 
-                socketio.emit("dashboard_update", payload, room=employee_id)
-                subscriber.acknowledge(subscription_path, [msg.ack_id])
-                logger.info(f"Acknowledged message for employee_id={employee_id}")
-
-            except Exception as e:
-                logger.exception("Error processing Pub/Sub message")
-
-# --- Start the Pub/Sub Listener as a Background Task ---
-socketio.start_background_task(listen_pubsub_messages)
+# Launch the listener in a dedicated daemon thread so it won't block the main event loop.
+threading.Thread(target=start_pubsub_listener, daemon=True).start()
 
 # --- Note ---
 # Do NOT call socketio.run() here; Gunicorn will run the app via your wsgi.py.

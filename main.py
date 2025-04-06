@@ -15,22 +15,26 @@ app = FastAPI()
 # A connection manager to track active WebSocket connections by employee_id.
 class ConnectionManager:
     def __init__(self):
-        # Dictionary mapping employee_id to list of WebSocket connections.
+        # Dictionary mapping employee_id (as a string) to list of WebSocket connections.
         self.active_connections = {}
 
     async def connect(self, websocket: WebSocket, employee_id: str):
         await websocket.accept()
+        # Ensure employee_id is always a string.
+        employee_id = str(employee_id)
         if employee_id not in self.active_connections:
             self.active_connections[employee_id] = []
         self.active_connections[employee_id].append(websocket)
         logger.info(f"Employee {employee_id} connected. Total connections: {len(self.active_connections[employee_id])}")
 
     def disconnect(self, websocket: WebSocket, employee_id: str):
+        employee_id = str(employee_id)
         if employee_id in self.active_connections:
             self.active_connections[employee_id].remove(websocket)
             logger.info(f"Employee {employee_id} disconnected. Remaining: {len(self.active_connections[employee_id])}")
 
     async def broadcast(self, message: str, employee_id: str):
+        employee_id = str(employee_id)
         if employee_id in self.active_connections:
             for connection in self.active_connections[employee_id]:
                 try:
@@ -57,6 +61,8 @@ async def websocket_endpoint(
         auth_token: str = Query(...)
 ):
     # TODO: Insert token verification logic if needed.
+    # Ensure employee_id is a string:
+    employee_id = str(employee_id)
     await manager.connect(websocket, employee_id)
     keepalive_task = asyncio.create_task(send_keepalive(websocket))
     try:
@@ -75,7 +81,7 @@ subscription_path = f"projects/{project_id}/subscriptions/{subscription_name}"
 subscriber = pubsub_v1.SubscriberClient()
 
 # --- Redis Setup ---
-# Since you reinstalled Redis without authentication, we connect without a password.
+# Since Redis is installed without authentication, we connect without a password.
 REDIS_URL = "redis://redis-master.default.svc.cluster.local:6379"
 redis = None  # Will be initialized on startup
 
@@ -95,7 +101,8 @@ async def redis_listener():
             try:
                 data = msg["data"]
                 parsed = json.loads(data)
-                employee_id = parsed.get("employee_id")
+                # Force employee_id to string.
+                employee_id = str(parsed.get("employee_id"))
                 logger.info(f"Redis received message for employee {employee_id}: {parsed}")
                 await manager.broadcast(data, employee_id)
             except Exception as e:
@@ -106,9 +113,10 @@ async def redis_listener():
 def pubsub_callback(message: pubsub_v1.subscriber.message.Message):
     try:
         payload = json.loads(message.data.decode("utf-8"))
-        employee_id = payload.get("employee_id")
+        # Force employee_id to string.
+        employee_id = str(payload.get("employee_id"))
         logger.info(f"Received Pub/Sub message for employee {employee_id}: {payload}")
-        # Publish the payload to the Redis channel
+        # Publish the payload to the Redis channel.
         future = asyncio.run_coroutine_threadsafe(
             redis.publish("dashboard_channel", json.dumps(payload)), event_loop
         )
@@ -137,5 +145,5 @@ async def startup_event():
     await init_redis()
     # Start the Redis listener as a background task.
     event_loop.create_task(redis_listener())
-    # Run the blocking Pub/Sub listener in an executor.
+    # Run the blocking Pub/Sub listener in a separate thread so it doesn't block the event loop.
     event_loop.run_in_executor(None, start_pubsub_listener)

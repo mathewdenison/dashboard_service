@@ -135,17 +135,31 @@ async def redis_listener():
 # --- Pub/Sub Callback (Publishing to Redis) ---
 def pubsub_callback(message: pubsub_v1.subscriber.message.Message):
     try:
-        payload = json.loads(message.data.decode("utf-8"))
+        data_str = message.data.decode("utf-8")
+        logger.info("Raw Pub/Sub message data: %s", data_str)
+        payload = json.loads(data_str) if data_str else None
+
+        if not payload or not isinstance(payload, dict):
+            logger.error("Received empty or invalid payload: %s", data_str)
+            message.ack()  # Or message.nack() if you want to retry
+            return
+
         employee_id = str(payload.get("employee_id"))
-        logger.info(f"Received Pub/Sub message for employee {employee_id}: {payload}")
+        if employee_id.lower() == "all":
+            logger.info("Received bulk PTO message for all employees: %s", payload)
+        else:
+            logger.info("Received Pub/Sub message for employee %s: %s", employee_id, payload)
+
         future = asyncio.run_coroutine_threadsafe(
             redis.publish("dashboard_channel", json.dumps(payload)), event_loop
         )
         future.result()  # Optionally wait for the publish to complete.
         message.ack()
     except Exception as e:
-        logger.exception("Error processing Pub/Sub message: %s", e)
+        logger.exception("Error processing Pub/Sub message. Raw data: %s. Exception: %s", message.data.decode("utf-8"), e)
         message.nack()
+
+
 
 def start_pubsub_listener():
     future = subscriber.subscribe(subscription_path, callback=pubsub_callback)

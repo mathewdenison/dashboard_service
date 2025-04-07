@@ -9,14 +9,17 @@ import aioredis  # For async Redis access
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("dashboard_service")
 
-# --- FastAPI and WebSocket Setup ---
+# --- FastAPI Setup ---
 app = FastAPI()
 
-# A connection manager to track active WebSocket connections by employee_id.
+# Updated ConnectionManager that stores only the latest message of each type per employee.
 class ConnectionManager:
     def __init__(self):
         # Dictionary mapping employee_id (as a string) to list of WebSocket connections.
         self.active_connections = {}
+        # Dictionary to store the latest message per type for each employee.
+        # Format: { employee_id: { msg_type: message_string, ... }, ... }
+        self.latest_messages = {}
 
     async def connect(self, websocket: WebSocket, employee_id: str):
         await websocket.accept()
@@ -26,6 +29,14 @@ class ConnectionManager:
         self.active_connections[employee_id].append(websocket)
         logger.info(f"Employee {employee_id} connected. Total connections: {len(self.active_connections[employee_id])}")
 
+        # When a new connection is established, send the latest messages (if any) to the client.
+        if employee_id in self.latest_messages:
+            for msg in self.latest_messages[employee_id].values():
+                try:
+                    await websocket.send_text(msg)
+                except Exception as e:
+                    logger.exception("Error sending latest message to employee %s: %s", employee_id, e)
+
     def disconnect(self, websocket: WebSocket, employee_id: str):
         employee_id = str(employee_id)
         if employee_id in self.active_connections:
@@ -34,6 +45,20 @@ class ConnectionManager:
 
     async def broadcast(self, message: str, employee_id: str):
         employee_id = str(employee_id)
+        # Attempt to parse the message to extract its type.
+        try:
+            parsed = json.loads(message)
+            msg_type = parsed.get("type")
+        except Exception as e:
+            logger.exception("Error parsing message for employee %s: %s", employee_id, e)
+            msg_type = None
+
+        # If message type exists, store/update it in the latest_messages.
+        if msg_type:
+            if employee_id not in self.latest_messages:
+                self.latest_messages[employee_id] = {}
+            self.latest_messages[employee_id][msg_type] = message
+
         if employee_id in self.active_connections:
             for connection in self.active_connections[employee_id]:
                 try:
@@ -102,7 +127,6 @@ async def redis_listener():
                 employee_id = str(parsed.get("employee_id"))
                 msg_type = parsed.get("type", "data")
                 logger.info(f"Redis received message for employee {employee_id} with type '{msg_type}': {parsed}")
-                # Broadcast the message to the employee's connections.
                 await manager.broadcast(data, employee_id)
             except Exception as e:
                 logger.exception("Error processing Redis message: %s", e)
@@ -114,7 +138,6 @@ def pubsub_callback(message: pubsub_v1.subscriber.message.Message):
         payload = json.loads(message.data.decode("utf-8"))
         employee_id = str(payload.get("employee_id"))
         logger.info(f"Received Pub/Sub message for employee {employee_id}: {payload}")
-        # Publish the payload to the Redis channel.
         future = asyncio.run_coroutine_threadsafe(
             redis.publish("dashboard_channel", json.dumps(payload)), event_loop
         )
@@ -139,9 +162,6 @@ event_loop = asyncio.get_event_loop()
 async def startup_event():
     global event_loop
     event_loop = asyncio.get_event_loop()
-    # Initialize Redis connection.
     await init_redis()
-    # Start the Redis listener as a background task.
     event_loop.create_task(redis_listener())
-    # Run the blocking Pub/Sub listener in a separate thread so it doesn't block the event loop.
     event_loop.run_in_executor(None, start_pubsub_listener)

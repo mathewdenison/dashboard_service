@@ -15,10 +15,7 @@ app = FastAPI()
 # Updated ConnectionManager that stores only the latest message of each type per employee.
 class ConnectionManager:
     def __init__(self):
-        # Dictionary mapping employee_id (as a string) to list of WebSocket connections.
         self.active_connections = {}
-        # Dictionary to store the latest message per type for each employee.
-        # Format: { employee_id: { msg_type: message_string, ... }, ... }
         self.latest_messages = {}
 
     async def connect(self, websocket: WebSocket, employee_id: str):
@@ -28,8 +25,7 @@ class ConnectionManager:
             self.active_connections[employee_id] = []
         self.active_connections[employee_id].append(websocket)
         logger.info(f"Employee {employee_id} connected. Total connections: {len(self.active_connections[employee_id])}")
-
-        # When a new connection is established, send the latest messages (if any) to the client.
+        # Send the latest messages for this employee
         if employee_id in self.latest_messages:
             for msg in self.latest_messages[employee_id].values():
                 try:
@@ -44,27 +40,44 @@ class ConnectionManager:
             logger.info(f"Employee {employee_id} disconnected. Remaining: {len(self.active_connections[employee_id])}")
 
     async def broadcast(self, message: str, employee_id: str):
-        employee_id = str(employee_id)
-        # Attempt to parse the message to extract its type.
-        try:
-            parsed = json.loads(message)
-            msg_type = parsed.get("type")
-        except Exception as e:
-            logger.exception("Error parsing message for employee %s: %s", employee_id, e)
-            msg_type = None
+        # If employee_id is "all", broadcast to every connection
+        if employee_id.lower() == "all":
+            # Optionally, store this bulk message as latest for each employee:
+            for emp_id in self.active_connections.keys():
+                if emp_id not in self.latest_messages:
+                    self.latest_messages[emp_id] = {}
+                # Use the message type as key if available:
+                try:
+                    parsed = json.loads(message)
+                    msg_type = parsed.get("type", "data")
+                except Exception:
+                    msg_type = "data"
+                self.latest_messages[emp_id][msg_type] = message
 
-        # If message type exists, store/update it in the latest_messages.
-        if msg_type:
+                # Send the message to each active connection.
+                for connection in self.active_connections[emp_id]:
+                    try:
+                        await connection.send_text(message)
+                    except Exception as e:
+                        logger.exception("Error sending bulk message to employee %s: %s", emp_id, e)
+        else:
+            employee_id = str(employee_id)
+            # For regular messages, store and broadcast only for that employee.
+            try:
+                parsed = json.loads(message)
+                msg_type = parsed.get("type", "data")
+            except Exception:
+                msg_type = "data"
             if employee_id not in self.latest_messages:
                 self.latest_messages[employee_id] = {}
             self.latest_messages[employee_id][msg_type] = message
 
-        if employee_id in self.active_connections:
-            for connection in self.active_connections[employee_id]:
-                try:
-                    await connection.send_text(message)
-                except Exception as e:
-                    logger.exception("Error sending message to employee %s: %s", employee_id, e)
+            if employee_id in self.active_connections:
+                for connection in self.active_connections[employee_id]:
+                    try:
+                        await connection.send_text(message)
+                    except Exception as e:
+                        logger.exception("Error sending message to employee %s: %s", employee_id, e)
 
 manager = ConnectionManager()
 

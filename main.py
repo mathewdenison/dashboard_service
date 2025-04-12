@@ -17,13 +17,6 @@ logger = logging.getLogger("dashboard_service")
 # ----------------------------
 app = FastAPI()
 
-# Setup templates (if needed for other endpoints)
-templates_path = pkg_resources.resource_filename("user_management_common_timesheet_mfdenison_hopkinsep", "templates")
-templates = Jinja2Templates(directory=templates_path)
-
-# ----------------------------
-# Connection Manager
-# ----------------------------
 class ConnectionManager:
     def __init__(self):
         # active_connections is a dict mapping employee_id (as str) to a list of WebSocket connections.

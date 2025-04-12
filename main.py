@@ -2,20 +2,33 @@ import asyncio
 import json
 import logging
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
+from fastapi.templating import Jinja2Templates
+import pkg_resources
 from google.cloud import pubsub_v1
-import aioredis  # For async Redis access
 
-# --- Logging Setup ---
+# ----------------------------
+# Logging Setup
+# ----------------------------
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("dashboard_service")
 
-# --- FastAPI Setup ---
+# ----------------------------
+# FastAPI Setup
+# ----------------------------
 app = FastAPI()
 
-# Updated ConnectionManager that stores only the latest message of each type per employee.
+# Setup templates (if needed for other endpoints)
+templates_path = pkg_resources.resource_filename("user_management_common_timesheet_mfdenison_hopkinsep", "templates")
+templates = Jinja2Templates(directory=templates_path)
+
+# ----------------------------
+# Connection Manager
+# ----------------------------
 class ConnectionManager:
     def __init__(self):
+        # active_connections is a dict mapping employee_id (as str) to a list of WebSocket connections.
         self.active_connections = {}
+        # latest_messages stores, per employee, the latest message per type.
         self.latest_messages = {}
 
     async def connect(self, websocket: WebSocket, employee_id: str):
@@ -25,7 +38,7 @@ class ConnectionManager:
             self.active_connections[employee_id] = []
         self.active_connections[employee_id].append(websocket)
         logger.info(f"Employee {employee_id} connected. Total connections: {len(self.active_connections[employee_id])}")
-        # Send the latest messages for this employee
+        # Send any latest messages for this employee.
         if employee_id in self.latest_messages:
             for msg in self.latest_messages[employee_id].values():
                 try:
@@ -40,21 +53,16 @@ class ConnectionManager:
             logger.info(f"Employee {employee_id} disconnected. Remaining: {len(self.active_connections[employee_id])}")
 
     async def broadcast(self, message: str, employee_id: str):
-        # If employee_id is "all", broadcast to every connection
         if employee_id.lower() == "all":
-            # Optionally, store this bulk message as latest for each employee:
             for emp_id in self.active_connections.keys():
                 if emp_id not in self.latest_messages:
                     self.latest_messages[emp_id] = {}
-                # Use the message type as key if available:
                 try:
                     parsed = json.loads(message)
                     msg_type = parsed.get("type", "data")
                 except Exception:
                     msg_type = "data"
                 self.latest_messages[emp_id][msg_type] = message
-
-                # Send the message to each active connection.
                 for connection in self.active_connections[emp_id]:
                     try:
                         await connection.send_text(message)
@@ -62,7 +70,6 @@ class ConnectionManager:
                         logger.exception("Error sending bulk message to employee %s: %s", emp_id, e)
         else:
             employee_id = str(employee_id)
-            # For regular messages, store and broadcast only for that employee.
             try:
                 parsed = json.loads(message)
                 msg_type = parsed.get("type", "data")
@@ -71,7 +78,6 @@ class ConnectionManager:
             if employee_id not in self.latest_messages:
                 self.latest_messages[employee_id] = {}
             self.latest_messages[employee_id][msg_type] = message
-
             if employee_id in self.active_connections:
                 for connection in self.active_connections[employee_id]:
                     try:
@@ -81,7 +87,6 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
-# Keep-alive task: send periodic pings to keep the connection alive.
 async def send_keepalive(websocket: WebSocket, interval: int = 30):
     try:
         while True:
@@ -90,14 +95,11 @@ async def send_keepalive(websocket: WebSocket, interval: int = 30):
     except Exception as e:
         logger.exception("Keepalive error: %s", e)
 
-# --- WebSocket Endpoint ---
 @app.websocket("/ws/dashboard")
 async def websocket_endpoint(
         websocket: WebSocket,
         employee_id: str = Query(...),
-        auth_token: str = Query(...)
 ):
-    # TODO: Insert token verification logic if needed.
     employee_id = str(employee_id)
     await manager.connect(websocket, employee_id)
     keepalive_task = asyncio.create_task(send_keepalive(websocket))
@@ -105,90 +107,64 @@ async def websocket_endpoint(
         while True:
             data = await websocket.receive_text()
             logger.info(f"Received from employee {employee_id}: {data}")
-            # Optionally process incoming messages from the client.
     except WebSocketDisconnect:
         keepalive_task.cancel()
         manager.disconnect(websocket, employee_id)
 
-# --- Google Pub/Sub Setup ---
+# ----------------------------
+# Google Pub/Sub Setup
+# ----------------------------
 project_id = "hopkinstimesheetproj"
 subscription_name = "dashboard-sub"
 subscription_path = f"projects/{project_id}/subscriptions/{subscription_name}"
 subscriber = pubsub_v1.SubscriberClient()
 
-# --- Redis Setup ---
-# Since Redis is installed without authentication, we connect without a password.
-REDIS_URL = "redis://redis-master.default.svc.cluster.local:6379"
-redis = None  # Will be initialized on startup
-
-async def init_redis():
-    global redis
-    redis = await aioredis.from_url(REDIS_URL, encoding="utf-8", decode_responses=True)
-    logger.info("Redis connection established")
-
-async def redis_listener():
-    """Subscribe to the Redis channel and broadcast messages to local WebSocket connections."""
-    pubsub_redis = redis.pubsub()
-    await pubsub_redis.subscribe("dashboard_channel")
-    logger.info("Subscribed to Redis channel: dashboard_channel")
-    while True:
-        msg = await pubsub_redis.get_message(ignore_subscribe_messages=True, timeout=1.0)
-        if msg:
-            try:
-                data = msg["data"]
-                parsed = json.loads(data)
-                employee_id = str(parsed.get("employee_id"))
-                msg_type = parsed.get("type", "data")
-                logger.info(f"Redis received message for employee {employee_id} with type '{msg_type}': {parsed}")
-                await manager.broadcast(data, employee_id)
-            except Exception as e:
-                logger.exception("Error processing Redis message: %s", e)
-        await asyncio.sleep(0.1)
-
-# --- Pub/Sub Callback (Publishing to Redis) ---
+# We no longer use Redis. Instead, the Pub/Sub callback will directly broadcast messages.
 def pubsub_callback(message: pubsub_v1.subscriber.message.Message):
     try:
         data_str = message.data.decode("utf-8")
         logger.info("Raw Pub/Sub message data: %s", data_str)
         payload = json.loads(data_str) if data_str else None
-
         if not payload or not isinstance(payload, dict):
             logger.error("Received empty or invalid payload: %s", data_str)
-            message.ack()  # Or message.nack() if you want to retry
+            message.ack()  # Acknowledge invalid messages to avoid retry
             return
 
         employee_id = str(payload.get("employee_id"))
         if employee_id.lower() == "all":
-            logger.info("Received bulk PTO message for all employees: %s", payload)
+            logger.info("Received bulk message for all employees: %s", payload)
         else:
             logger.info("Received Pub/Sub message for employee %s: %s", employee_id, payload)
 
+        # Use the global event loop to run the broadcast coroutine.
         future = asyncio.run_coroutine_threadsafe(
-            redis.publish("dashboard_channel", json.dumps(payload)), event_loop
+            manager.broadcast(json.dumps(payload), employee_id), event_loop
         )
-        future.result()  # Optionally wait for the publish to complete.
+        future.result()
         message.ack()
     except Exception as e:
-        logger.exception("Error processing Pub/Sub message. Raw data: %s. Exception: %s", message.data.decode("utf-8"), e)
+        logger.exception("Error processing Pub/Sub message. Raw data: %s. Exception: %s",
+                         message.data.decode("utf-8"), e)
         message.nack()
-
-
 
 def start_pubsub_listener():
     future = subscriber.subscribe(subscription_path, callback=pubsub_callback)
     logger.info("Started Pub/Sub listener for dashboard service")
     try:
-        future.result()  # This will block indefinitely unless an error occurs.
+        future.result()  # Blocks indefinitely.
     except Exception as e:
         logger.exception("Error in Pub/Sub listener: %s", e)
+        future.cancel()
 
-# --- Startup Event ---
+# ----------------------------
+# Startup Event
+# ----------------------------
 event_loop = asyncio.get_event_loop()
 
 @app.on_event("startup")
 async def startup_event():
     global event_loop
     event_loop = asyncio.get_event_loop()
-    await init_redis()
-    event_loop.create_task(redis_listener())
+    # Remove Redis initialization; no Redis is used in this updated version.
+    # Instead, we only start the Pub/Sub listener in an executor.
     event_loop.run_in_executor(None, start_pubsub_listener)
